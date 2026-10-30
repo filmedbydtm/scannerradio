@@ -92,13 +92,52 @@ class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTim
     }
 
     /**
-     * Tries every address the host resolves to, IPv4 first. Phones often get IPv6 addresses
-     * from DNS without having a working IPv6 route ("No route to host").
+     * Tries every address the host resolves to, IPv4 first. If none of the phone's DNS answers
+     * work (ad blockers and "Private DNS" often fake answers for cdnstream1.com), the host is
+     * looked up again with Google's DNS-over-HTTPS and those addresses are tried.
      */
     private fun connect(host: String, port: Int): Socket {
-        val addresses = InetAddress.getAllByName(host).sortedBy { if (it is Inet4Address) 0 else 1 }
+        val tried = ArrayList<String>()
         var last: Exception? = null
-        for (addr in addresses) {
+        val system = try {
+            InetAddress.getAllByName(host).toList()
+        } catch (e: IOException) {
+            last = e
+            emptyList()
+        }
+        tryAddresses(system, port, tried) { last = it }?.let { return it }
+
+        val doh = try {
+            resolveWithDoh(host)
+        } catch (e: Exception) {
+            tried += "Google DNS lookup failed: ${e.message}"
+            emptyList()
+        }
+        tryAddresses(doh.filter { a -> system.none { it == a } }, port, tried) { last = it }?.let { return it }
+
+        val blocked = system.isNotEmpty() && system.all { it.isAnyLocalAddress || it.isLoopbackAddress }
+        throw IOException(
+            buildString {
+                append("Could not reach $host:$port. ")
+                if (blocked) append("Your phone's DNS is blocking this site (ad blocker or Private DNS). ")
+                append("Tried: ${tried.joinToString(", ").ifEmpty { "no addresses" }}. ")
+                append("Last error: ${last?.message}")
+            },
+            last,
+        )
+    }
+
+    private fun tryAddresses(
+        addresses: List<InetAddress>,
+        port: Int,
+        tried: MutableList<String>,
+        onError: (Exception) -> Unit,
+    ): Socket? {
+        for (addr in addresses.sortedBy { if (it is Inet4Address) 0 else 1 }) {
+            if (addr.isAnyLocalAddress) {
+                tried += "${addr.hostAddress} (fake/blocked)"
+                continue
+            }
             val sock = Socket()
             socket = sock
             try {
@@ -107,10 +146,23 @@ class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTim
                 return sock
             } catch (e: IOException) {
                 try { sock.close() } catch (_: Exception) {}
-                last = e
+                tried += "${addr.hostAddress} (${e.message?.substringAfterLast(": ") ?: e.javaClass.simpleName})"
+                onError(e)
             }
         }
-        throw IOException("Could not reach $host:$port (tried ${addresses.size} addresses): ${last?.message}", last)
+        return null
+    }
+
+    /** Looks up IPv4 addresses for [host] via Google's DNS-over-HTTPS JSON API. */
+    private fun resolveWithDoh(host: String): List<InetAddress> {
+        val c = java.net.URL("https://dns.google/resolve?name=$host&type=A").openConnection() as HttpsURLConnection
+        c.connectTimeout = connectTimeoutMs
+        c.readTimeout = connectTimeoutMs
+        try {
+            return parseDohIpv4(c.inputStream.bufferedReader().readText()).map { InetAddress.getByName(it) }
+        } finally {
+            c.disconnect()
+        }
     }
 
     companion object {
@@ -124,6 +176,11 @@ class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTim
             "Origin" to "https://www.broadcastify.com",
             "Icy-MetaData" to "0",
         )
+
+        private val DOH_IPV4 = Regex("\"data\"\\s*:\\s*\"(\\d+\\.\\d+\\.\\d+\\.\\d+)\"")
+
+        /** Pulls the IPv4 addresses out of a dns.google JSON answer. */
+        fun parseDohIpv4(json: String): List<String> = DOH_IPV4.findAll(json).map { it.groupValues[1] }.toList()
 
         /** Reads one CRLF/LF-terminated header line (ISO-8859-1). */
         fun readLine(input: InputStream): String? {

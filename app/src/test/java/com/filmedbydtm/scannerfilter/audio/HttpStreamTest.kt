@@ -59,6 +59,12 @@ class HttpStreamTest {
         HttpStream().open("http://127.0.0.1:$port/")
     }
 
+    @Test fun parsesGoogleDnsAnswer() {
+        val json = """{"Status":0,"Answer":[{"name":"broadcastify.cdnstream1.com.","type":5,"data":"edge.example.net."},""" +
+            """{"name":"edge.example.net.","type":1,"TTL":60,"data":"203.0.113.7"},{"type":1,"data": "198.51.100.2"}]}"""
+        assertEquals(listOf("203.0.113.7", "198.51.100.2"), HttpStream.parseDohIpv4(json))
+    }
+
     @Test fun feedLinesAcceptNumbersPagesAndUrls() {
         val feeds = Settings.parseFeeds(
             """
