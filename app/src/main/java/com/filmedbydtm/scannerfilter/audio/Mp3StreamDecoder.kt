@@ -28,8 +28,26 @@ class Mp3StreamDecoder(
         try { fallbackConn?.disconnect() } catch (_: Exception) {}
     }
 
+    /**
+     * Opens the stream. If an https link cannot be reached at all (no HTTP response), the same
+     * link is retried over plain http, which some networks let through when https times out.
+     */
+    private fun openStream(link: String): InputStream = try {
+        openOnce(link)
+    } catch (e: HttpStatusException) {
+        throw e
+    } catch (e: java.io.IOException) {
+        if (!running || !link.startsWith("https://", ignoreCase = true)) throw e
+        val plain = "http://" + link.substring("https://".length)
+        try {
+            openOnce(plain)
+        } catch (e2: java.io.IOException) {
+            throw java.io.IOException("https: ${e.message} | http: ${e2.message}", e2)
+        }
+    }
+
     /** Opens the stream with our client, falling back to Android's HTTP stack on network errors. */
-    private fun openStream(link: String): InputStream {
+    private fun openOnce(link: String): InputStream {
         fallbackType = null
         return try {
             http.open(link)

@@ -19,7 +19,7 @@ class HttpStatusException(val code: Int, val url: String) : IOException("HTTP $c
  * between https and http, accepts SHOUTcast's "ICY 200 OK" status line, and sends the
  * browser-style headers Broadcastify's stream servers expect.
  */
-class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTimeoutMs: Int = 30_000) {
+class HttpStream(private val connectTimeoutMs: Int = 8_000, private val readTimeoutMs: Int = 30_000) {
 
     @Volatile private var socket: Socket? = null
     var finalUrl: String = ""
