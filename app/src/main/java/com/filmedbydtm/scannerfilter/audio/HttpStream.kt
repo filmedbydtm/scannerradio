@@ -57,6 +57,10 @@ class HttpStream(private val connectTimeoutMs: Int = 8_000, private val readTime
                 append("GET $path HTTP/1.1\r\n")
                 append("Host: $hostHeader\r\n")
                 HEADERS.forEach { (k, v) -> append("$k: $v\r\n") }
+                uri.rawUserInfo?.let {
+                    val auth = java.net.URLDecoder.decode(it, "UTF-8").toByteArray(Charsets.UTF_8)
+                    append("Authorization: Basic ${java.util.Base64.getEncoder().encodeToString(auth)}\r\n")
+                }
                 append("Connection: close\r\n\r\n")
             }
             s.getOutputStream().apply { write(req.toByteArray(Charsets.ISO_8859_1)); flush() }

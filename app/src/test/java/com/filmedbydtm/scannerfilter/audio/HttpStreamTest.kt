@@ -46,6 +46,12 @@ class HttpStreamTest {
         assertTrue(requests[1].startsWith("GET /relay HTTP/1.1"))
     }
 
+    @Test fun sendsBasicAuthFromLink() {
+        val (port, requests) = server({ _ -> "HTTP/1.1 200 OK\r\n\r\nok" })
+        HttpStream().open("http://me:p%40ss@127.0.0.1:$port/1.mp3").readBytes()
+        assertTrue(requests[0].contains("Authorization: Basic bWU6cEBzcw=="))
+    }
+
     @Test fun decodesChunkedBody() {
         val (port, _) = server(
             { _ -> "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n2\r\nde\r\n0\r\n\r\n" },
@@ -76,8 +82,11 @@ class HttpStreamTest {
             """.trimIndent(),
         )
         assertEquals(3, feeds.size)
-        assertEquals("https://broadcastify.cdnstream1.com/13671", feeds[0].url)
+        assertEquals(
+            listOf("https://broadcastify.cdnstream1.com/13671", "https://audio.broadcastify.com/13671.mp3"),
+            feeds[0].urls,
+        )
         assertEquals("https://broadcastify.cdnstream1.com/18629", feeds[1].url)
-        assertEquals("http://example.com:8000/stream", feeds[2].url)
+        assertEquals(listOf("http://example.com:8000/stream"), feeds[2].urls)
     }
 }

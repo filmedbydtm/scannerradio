@@ -3,7 +3,10 @@ package com.filmedbydtm.scannerfilter.service
 import android.content.Context
 import com.filmedbydtm.scannerfilter.logic.Rules
 
-data class Feed(val name: String, val url: String)
+/** A feed and the stream addresses to try for it, in order. */
+data class Feed(val name: String, val urls: List<String>) {
+    val url: String get() = urls.first()
+}
 
 /** All user settings, stored in SharedPreferences. */
 class Settings(context: Context) {
@@ -61,12 +64,21 @@ Detroit Fire | 18629
 
         private val FEED_PAGE = Regex("""broadcastify\.com/(?:listen/)?(?:feed|webPlayer)/(\d+)""", RegexOption.IGNORE_CASE)
 
-        /** Accepts a feed number, a broadcastify.com feed page link, or a direct stream URL. */
-        fun streamUrl(value: String): String? {
+        /** Broadcastify serves each feed from more than one host; try them in this order. */
+        fun broadcastifyUrls(id: String) = listOf(
+            "https://broadcastify.cdnstream1.com/$id",
+            "https://audio.broadcastify.com/$id.mp3",
+        )
+
+        /**
+         * Accepts a feed number, a broadcastify.com feed page link, or a direct stream URL
+         * (premium links like https://user:pass@audio.broadcastify.com/12345.mp3 work too).
+         */
+        fun streamUrls(value: String): List<String>? {
             val v = value.trim()
-            if (v.all { it.isDigit() } && v.isNotEmpty()) return "https://broadcastify.cdnstream1.com/$v"
-            FEED_PAGE.find(v)?.let { return "https://broadcastify.cdnstream1.com/${it.groupValues[1]}" }
-            if (v.startsWith("http://", true) || v.startsWith("https://", true)) return v
+            if (v.all { it.isDigit() } && v.isNotEmpty()) return broadcastifyUrls(v)
+            FEED_PAGE.find(v)?.let { return broadcastifyUrls(it.groupValues[1]) }
+            if (v.startsWith("http://", true) || v.startsWith("https://", true)) return listOf(v)
             return null
         }
 
@@ -76,8 +88,8 @@ Detroit Fire | 18629
             .mapNotNull { line ->
                 val i = line.indexOf('|')
                 val name = if (i < 0) line else line.substring(0, i).trim()
-                val url = streamUrl(if (i < 0) line else line.substring(i + 1)) ?: return@mapNotNull null
-                Feed(name, url)
+                val urls = streamUrls(if (i < 0) line else line.substring(i + 1)) ?: return@mapNotNull null
+                Feed(name, urls)
             }
             .toList()
     }

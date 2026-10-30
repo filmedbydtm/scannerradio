@@ -105,13 +105,15 @@ class ScannerService : Service() {
     private fun captureLoop(feed: Feed, gate: Int) {
         var backoff = 2_000L
         var totalBytes = 0L
+        var urlIndex = 0
         val status = { text: String -> ScannerState.feedStatus[feed.name] = text }
         while (running) {
             val segmenter = Segmenter(feed.name, threshold = gate) { toTranscribe.put(it) }
             var lastReport = 0L
             var bytesSinceReport = 0L
+            val url = feed.urls[urlIndex % feed.urls.size]
             val decoder = Mp3StreamDecoder(
-                feed.url,
+                url,
                 onConnected = { type ->
                     status("connected (${type ?: "unknown type"}), waiting for audio…")
                     ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connected: $type")
@@ -136,7 +138,7 @@ class ScannerService : Service() {
             )
             synchronized(decoders) { decoders += decoder }
             try {
-                status("connecting to ${feed.url}…")
+                status("connecting to ${redact(url)}…")
                 decoder.run()
                 backoff = 2_000L
             } catch (e: Exception) {
@@ -148,8 +150,9 @@ class ScannerService : Service() {
                         "feed not found (HTTP 404). Check the feed number."
                     else -> "${e.javaClass.simpleName}: ${e.message}"
                 }
-                status("connection failed: $msg · retrying in ${backoff / 1000}s")
-                ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connection failed: $msg")
+                status("connection failed (${redact(url)}): $msg · retrying in ${backoff / 1000}s")
+                ScannerState.log(System.currentTimeMillis(), "[${feed.name}] ${redact(url)} failed: $msg")
+                urlIndex++
             } finally {
                 synchronized(decoders) { decoders -= decoder }
                 segmenter.flush(System.currentTimeMillis())
@@ -159,6 +162,9 @@ class ScannerService : Service() {
             backoff = minOf(backoff * 2, 60_000L)
         }
     }
+
+    /** Hides any username:password in a stream link before it is shown on screen. */
+    private fun redact(url: String) = url.replace(Regex("//[^/@]+@"), "//***@")
 
     private fun transcribeLoop(settings: Settings) {
         val classifier = Classifier(Rules.parse(settings.rulesText), settings.minDurationSec)
