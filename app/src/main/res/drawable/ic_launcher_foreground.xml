@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- radio body -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M38,40 h32 a4,4 0 0 1 4,4 v28 a4,4 0 0 1 -4,4 h-32 a4,4 0 0 1 -4,-4 v-28 a4,4 0 0 1 4,-4 z" />
+    <!-- antenna -->
+    <path android:fillColor="#FFFFFF" android:pathData="M62,24 h4 v16 h-4 z" />
+    <!-- speaker grille -->
+    <path android:fillColor="#1B2A49" android:pathData="M40,48 h28 v3 h-28 z M40,55 h28 v3 h-28 z M40,62 h28 v3 h-28 z" />
+    <!-- filter dot -->
+    <path android:fillColor="#E8433B" android:pathData="M54,70 m-3,0 a3,3 0 1 0 6,0 a3,3 0 1 0 -6,0" />
+</vector>
