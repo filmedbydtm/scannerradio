@@ -14,6 +14,9 @@ object ScannerState {
     @Volatile var skipped = 0
     @Volatile var ignored = 0
 
+    /** Per-feed connection status line, keyed by feed name. */
+    val feedStatus = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private val log = ArrayDeque<String>()
     private val fmt = SimpleDateFormat("h:mm:ss a", Locale.US)
 
@@ -28,5 +31,6 @@ object ScannerState {
 
     fun resetCounters() {
         played = 0; skipped = 0; ignored = 0; queued = 0; nowPlaying = ""
+        feedStatus.clear()
     }
 }

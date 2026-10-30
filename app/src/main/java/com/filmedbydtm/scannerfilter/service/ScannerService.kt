@@ -94,7 +94,8 @@ class ScannerService : Service() {
         }
         threads += thread("transcribe") { transcribeLoop(settings) }
         threads += thread("play") { playLoop(settings) }
-        ScannerState.status = "Listening to ${feeds.joinToString { it.name }}"
+        ScannerState.status = (if (settings.playAll) "TEST MODE (playing everything) · " else "") +
+            "Listening to ${feeds.joinToString { it.name }}"
     }
 
     private fun thread(name: String, body: () -> Unit) = Thread {
@@ -103,19 +104,52 @@ class ScannerService : Service() {
 
     private fun captureLoop(feed: Feed, gate: Int) {
         var backoff = 2_000L
+        var totalBytes = 0L
+        val status = { text: String -> ScannerState.feedStatus[feed.name] = text }
         while (running) {
             val segmenter = Segmenter(feed.name, threshold = gate) { toTranscribe.put(it) }
-            val decoder = Mp3StreamDecoder(feed.url) { pcm, rate ->
-                segmenter.push(pcm, rate, System.currentTimeMillis())
-            }
+            var lastReport = 0L
+            var bytesSinceReport = 0L
+            val decoder = Mp3StreamDecoder(
+                feed.url,
+                onConnected = { type ->
+                    status("connected (${type ?: "unknown type"}), waiting for audio…")
+                    ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connected: $type")
+                },
+                onBytes = { n ->
+                    totalBytes += n
+                    bytesSinceReport += n
+                },
+                onPcm = { pcm, rate ->
+                    val now = System.currentTimeMillis()
+                    segmenter.push(pcm, rate, now)
+                    if (now - lastReport >= 1000) {
+                        val kbps = if (lastReport == 0L) 0 else bytesSinceReport * 8 / (now - lastReport)
+                        lastReport = now
+                        bytesSinceReport = 0
+                        status(
+                            "receiving ${kbps} kbps · ${totalBytes / 1024} KB · ${rate} Hz · " +
+                                "level ${segmenter.takePeak()} (squelch $gate) · ${segmenter.segmentCount} transmissions",
+                        )
+                    }
+                },
+            )
             synchronized(decoders) { decoders += decoder }
             try {
-                ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connected")
+                status("connecting to ${feed.url}…")
                 decoder.run()
                 backoff = 2_000L
             } catch (e: Exception) {
                 if (!running) break
-                ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connection lost: ${e.message}")
+                val msg = when {
+                    e is com.filmedbydtm.scannerfilter.audio.HttpStatusException && e.code == 403 ->
+                        "refused by Broadcastify (HTTP 403). The feed may be offline or blocked."
+                    e is com.filmedbydtm.scannerfilter.audio.HttpStatusException && e.code == 404 ->
+                        "feed not found (HTTP 404). Check the feed number."
+                    else -> "${e.javaClass.simpleName}: ${e.message}"
+                }
+                status("connection failed: $msg · retrying in ${backoff / 1000}s")
+                ScannerState.log(System.currentTimeMillis(), "[${feed.name}] connection failed: $msg")
             } finally {
                 synchronized(decoders) { decoders -= decoder }
                 segmenter.flush(System.currentTimeMillis())
@@ -129,6 +163,7 @@ class ScannerService : Service() {
     private fun transcribeLoop(settings: Settings) {
         val classifier = Classifier(Rules.parse(settings.rulesText), settings.minDurationSec)
         val beep = settings.beep
+        val playAll = settings.playAll
         Transcriber(Transcriber.modelDir(filesDir)).use { asr ->
             while (running) {
                 val seg = toTranscribe.poll(500, TimeUnit.MILLISECONDS) ?: continue
@@ -146,6 +181,12 @@ class ScannerService : Service() {
                 val transcript = words.joinToString(" ") { it.text }
                 val d = classifier.classify(words, seg.durationSec)
                 val tag = "[${seg.feed}] ${d.category}"
+                if (playAll) {
+                    playQueue.add(QueuedCall(seg.feed, seg.startedAt, seg.pcm, seg.sampleRate, true, "TEST ${d.category}", transcript))
+                    ScannerState.log(seg.startedAt, "TEST MODE would ${d.action} $tag: $transcript")
+                    ScannerState.queued = playQueue.size()
+                    continue
+                }
                 when (d.action) {
                     Action.PLAY -> {
                         playQueue.add(QueuedCall(seg.feed, seg.startedAt, seg.pcm, seg.sampleRate, true, d.category, transcript))

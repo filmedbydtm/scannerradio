@@ -42,26 +42,43 @@ class Settings(context: Context) {
         get() = p.getInt("gate", 400)
         set(v) = p.edit().putInt("gate", v).apply()
 
+    /** Test mode: play every transmission, skipping all filtering. */
+    var playAll: Boolean
+        get() = p.getBoolean("playAll", false)
+        set(v) = p.edit().putBoolean("playAll", v).apply()
+
     var beep: Boolean
         get() = p.getBoolean("beep", true)
         set(v) = p.edit().putBoolean("beep", v).apply()
 
-    fun feeds(): List<Feed> = feedsText.lineSequence()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() && !it.startsWith("#") }
-        .map { line ->
-            val i = line.indexOf('|')
-            if (i < 0) Feed(line, line) else Feed(line.substring(0, i).trim(), line.substring(i + 1).trim())
-        }
-        .filter { it.url.startsWith("http") }
-        .toList()
+    fun feeds(): List<Feed> = parseFeeds(feedsText)
 
     companion object {
-        const val DEFAULT_FEEDS = """# One feed per line:  Name | stream URL
-# Broadcastify feed pages look like broadcastify.com/listen/feed/12345
-# The stream URL for that feed is https://broadcastify.cdnstream1.com/12345
-# Detroit Police | https://broadcastify.cdnstream1.com/XXXXX
-# Detroit Fire | https://broadcastify.cdnstream1.com/XXXXX
+        const val DEFAULT_FEEDS = """# One feed per line:  Name | Broadcastify feed number, feed page link, or stream URL
+Detroit Police | 13671
+Detroit Fire | 18629
 """
+
+        private val FEED_PAGE = Regex("""broadcastify\.com/(?:listen/)?(?:feed|webPlayer)/(\d+)""", RegexOption.IGNORE_CASE)
+
+        /** Accepts a feed number, a broadcastify.com feed page link, or a direct stream URL. */
+        fun streamUrl(value: String): String? {
+            val v = value.trim()
+            if (v.all { it.isDigit() } && v.isNotEmpty()) return "https://broadcastify.cdnstream1.com/$v"
+            FEED_PAGE.find(v)?.let { return "https://broadcastify.cdnstream1.com/${it.groupValues[1]}" }
+            if (v.startsWith("http://", true) || v.startsWith("https://", true)) return v
+            return null
+        }
+
+        fun parseFeeds(text: String): List<Feed> = text.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("#") }
+            .mapNotNull { line ->
+                val i = line.indexOf('|')
+                val name = if (i < 0) line else line.substring(0, i).trim()
+                val url = streamUrl(if (i < 0) line else line.substring(i + 1)) ?: return@mapNotNull null
+                Feed(name, url)
+            }
+            .toList()
     }
 }

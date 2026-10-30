@@ -29,9 +29,11 @@ transmission into text on the phone, and only plays the calls you want.
 
 1. Install `ScannerFilter.apk` (allow "install unknown apps" for your browser or file manager).
 2. Tap **Download speech model**.
-3. Under **Feeds**, add one line per feed: `Detroit Police | https://broadcastify.cdnstream1.com/<feed id>`.
-   The feed id is the number in the Broadcastify feed page URL (`broadcastify.com/listen/feed/<feed id>`).
-4. Tap **Save settings**, then **Start**.
+3. Under **Feeds**, add one line per feed: `Detroit Police | 13671` (a feed number, feed page link, or stream URL all work). Detroit Police Dispatch (13671) and Detroit Fire (18629) are filled in by default on a fresh install.
+4. Tap **Start** (it saves your settings first).
+
+If you hear nothing, turn on **Test mode**: it plays every transmission so you can confirm the feed and
+sound work. The status area shows each feed's connection state, data rate and audio level.
 
 The **Activity** list shows every decision (queued, blocked, ignored, with the transcript) so you can
 tune the keyword lists. Raise the squelch level if static triggers false calls.

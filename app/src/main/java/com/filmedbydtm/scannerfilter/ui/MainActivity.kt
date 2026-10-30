@@ -32,6 +32,7 @@ class MainActivity : Activity() {
     private lateinit var status: TextView
     private lateinit var logView: TextView
     private lateinit var modelButton: Button
+    private var saveSettings: () -> Unit = {}
     private val handler = Handler(Looper.getMainLooper())
     @Volatile private var modelMessage = ""
 
@@ -75,8 +76,18 @@ class MainActivity : Activity() {
         modelButton = Button(this).apply { setOnClickListener { downloadModel() } }
         root.addView(modelButton)
 
+        val playAll = Switch(this).apply {
+            text = "Test mode: play every transmission (no filtering) to check feeds and sound"
+            isChecked = settings.playAll
+        }
+        root.addView(playAll)
+
         section(root, "Feeds")
-        val feeds = multiline(settings.feedsText, 5)
+        root.addView(TextView(this).apply {
+            text = "One per line: Name | Broadcastify feed number (e.g. 13671), feed page link, or stream URL"
+            textSize = 12f
+        })
+        val feeds = multiline(settings.feedsText, 4)
         root.addView(feeds)
 
         section(root, "Playback")
@@ -114,20 +125,24 @@ class MainActivity : Activity() {
             }
         })
 
+        saveSettings = {
+            settings.feedsText = feeds.text.toString()
+            settings.rulesText = rules.text.toString()
+            minDur.text.toString().toDoubleOrNull()?.let { settings.minDurationSec = it }
+            gap.text.toString().toDoubleOrNull()?.let { settings.gapSec = it }
+            lowAge.text.toString().toDoubleOrNull()?.let { settings.lowPriorityMaxAgeMin = it }
+            backlog.text.toString().toDoubleOrNull()?.let { settings.backlogSec = it }
+            gate.text.toString().toDoubleOrNull()?.let { settings.gateThreshold = it.toInt() }
+            settings.catchUp = catchUp.isChecked
+            settings.beep = beep.isChecked
+            settings.playAll = playAll.isChecked
+        }
         root.addView(Button(this).apply {
             text = "Save settings"
             setOnClickListener {
-                settings.feedsText = feeds.text.toString()
-                settings.rulesText = rules.text.toString()
-                minDur.text.toString().toDoubleOrNull()?.let { settings.minDurationSec = it }
-                gap.text.toString().toDoubleOrNull()?.let { settings.gapSec = it }
-                lowAge.text.toString().toDoubleOrNull()?.let { settings.lowPriorityMaxAgeMin = it }
-                backlog.text.toString().toDoubleOrNull()?.let { settings.backlogSec = it }
-                gate.text.toString().toDoubleOrNull()?.let { settings.gateThreshold = it.toInt() }
-                settings.catchUp = catchUp.isChecked
-                settings.beep = beep.isChecked
+                saveSettings()
                 val n = Rules.parse(settings.rulesText).size
-                toast("Saved ($n rule categories). Stop and start to apply.")
+                toast("Saved ($n rule categories). Tap Start to apply.")
             }
         })
 
@@ -147,9 +162,17 @@ class MainActivity : Activity() {
     }
 
     private fun start() {
-        if (settings.feeds().isEmpty()) { toast("Add at least one feed URL and tap Save first."); return }
+        saveSettings()
+        if (settings.feeds().isEmpty()) { toast("Add at least one feed (for example: Detroit Police | 13671)."); return }
         if (!Transcriber.isModelReady(filesDir)) { toast("Download the speech model first."); return }
-        startForegroundService(Intent(this, ScannerService::class.java))
+        val intent = Intent(this, ScannerService::class.java)
+        if (ScannerState.running) {
+            // Restart so new settings take effect.
+            startService(Intent(intent).setAction(ScannerService.ACTION_STOP))
+            handler.postDelayed({ startForegroundService(intent) }, 1500)
+        } else {
+            startForegroundService(intent)
+        }
     }
 
     private fun downloadModel() {
@@ -168,6 +191,7 @@ class MainActivity : Activity() {
         val s = ScannerState
         status.text = buildString {
             append(if (s.running) "● " else "○ ").append(s.status)
+            s.feedStatus.toSortedMap().forEach { (name, st) -> append("\n").append(name).append(": ").append(st) }
             if (s.nowPlaying.isNotEmpty()) append("\nNow playing: ").append(s.nowPlaying)
             append("\nWaiting: ${s.queued}   Played: ${s.played}   Blocked: ${s.skipped}   Ignored: ${s.ignored}")
             if (modelMessage.isNotEmpty()) append("\n").append(modelMessage)

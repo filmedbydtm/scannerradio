@@ -28,6 +28,13 @@ class Segmenter(
     private var activeStartedAt = 0L
     private var quietMs = 0
 
+    /** Loudest 20 ms frame since the last [takePeak] call; useful for setting the squelch. */
+    @Volatile private var peak = 0
+    @Volatile var segmentCount = 0
+        private set
+
+    fun takePeak(): Int = peak.also { peak = 0 }
+
     /** Feed mono 16-bit PCM. [now] is the wall-clock time of the end of this chunk. */
     fun push(pcm: ShortArray, rate: Int, now: Long) {
         if (rate != sampleRate) {
@@ -51,6 +58,7 @@ class Segmenter(
         var sum = 0.0
         for (s in f) sum += s.toDouble() * s
         val rms = sqrt(sum / f.size)
+        if (rms > peak) peak = rms.toInt()
         val loud = rms > threshold
         val cur = active
         if (cur == null) {
@@ -83,6 +91,7 @@ class Segmenter(
         val trim = ((quietMs / 20) * frameLen - keepTail).coerceAtLeast(0)
         val pcm = b.toArray(b.size - trim)
         quietMs = 0
+        segmentCount++
         if (pcm.isNotEmpty()) onSegment(Segment(feed, activeStartedAt, pcm, sampleRate))
     }
 }

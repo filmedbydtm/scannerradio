@@ -2,9 +2,8 @@ package com.filmedbydtm.scannerfilter.audio
 
 import android.media.MediaCodec
 import android.media.MediaFormat
+import java.io.FilterInputStream
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * Reads an endless MP3 (Icecast / Broadcastify) stream over HTTP, splits it into MP3 frames and
@@ -12,27 +11,54 @@ import java.net.URL
  */
 class Mp3StreamDecoder(
     private val url: String,
+    /** Called once the server has accepted the request. */
+    private val onConnected: (contentType: String?) -> Unit = {},
+    /** Called with the number of raw bytes read from the network. */
+    private val onBytes: (Int) -> Unit = {},
     private val onPcm: (pcm: ShortArray, sampleRate: Int) -> Unit,
 ) {
     @Volatile private var running = true
-    @Volatile private var conn: HttpURLConnection? = null
+    private val http = HttpStream()
 
     fun stop() {
         running = false
-        try { conn?.disconnect() } catch (_: Exception) {}
+        http.close()
     }
 
     /** Blocks until [stop] or the connection fails (throws). */
     fun run() {
-        val c = URL(url).openConnection() as HttpURLConnection
-        conn = c
-        c.connectTimeout = 15_000
-        c.readTimeout = 30_000
-        c.instanceFollowRedirects = true
-        c.setRequestProperty("User-Agent", "ScannerFilter/1.0 (Android)")
-        c.connect()
-        if (c.responseCode !in 200..299) throw IllegalStateException("HTTP ${c.responseCode} from feed")
-        c.inputStream.buffered(16_384).use { decode(it) }
+        var raw = http.open(url)
+        val type = http.contentType?.lowercase() ?: ""
+        if ("html" in type) {
+            http.close()
+            throw java.io.IOException("Got a web page, not audio. Use the feed number or stream URL.")
+        }
+        if ("mpegurl" in type || "pls" in type || "text/" in type) {
+            // A playlist instead of audio: follow the first stream link in it.
+            val bytes = ByteArray(65_536)
+            var n = 0
+            while (n < bytes.size) {
+                val r = raw.read(bytes, n, bytes.size - n)
+                if (r < 0) break
+                n += r
+            }
+            val body = String(bytes, 0, n, Charsets.UTF_8)
+            http.close()
+            val link = Regex("https?://[^\\s\"'<>]+").find(body)?.value
+                ?: throw java.io.IOException("Feed URL returned ${http.contentType}, not audio")
+            raw = http.open(link)
+        }
+        onConnected(http.contentType)
+        val counted = object : FilterInputStream(raw) {
+            override fun read(b: ByteArray, off: Int, len: Int): Int =
+                super.read(b, off, len).also { if (it > 0) onBytes(it) }
+        }
+        try {
+            decode(counted)
+        } finally {
+            http.close()
+        }
+        if (running) throw java.io.IOException("Stream ended")
     }
 
     private fun decode(input: InputStream) {
