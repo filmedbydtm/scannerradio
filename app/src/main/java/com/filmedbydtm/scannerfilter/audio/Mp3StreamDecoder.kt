@@ -19,16 +19,45 @@ class Mp3StreamDecoder(
 ) {
     @Volatile private var running = true
     private val http = HttpStream()
+    @Volatile private var fallbackConn: java.net.HttpURLConnection? = null
+    private var fallbackType: String? = null
 
     fun stop() {
         running = false
         http.close()
+        try { fallbackConn?.disconnect() } catch (_: Exception) {}
+    }
+
+    /** Opens the stream with our client, falling back to Android's HTTP stack on network errors. */
+    private fun openStream(link: String): InputStream {
+        fallbackType = null
+        return try {
+            http.open(link)
+        } catch (e: HttpStatusException) {
+            throw e
+        } catch (e: java.io.IOException) {
+            if (!running) throw e
+            val c = java.net.URL(link).openConnection() as java.net.HttpURLConnection
+            fallbackConn = c
+            c.connectTimeout = 15_000
+            c.readTimeout = 30_000
+            c.instanceFollowRedirects = true
+            HttpStream.HEADERS.forEach { (k, v) -> c.setRequestProperty(k, v) }
+            val code = try {
+                c.responseCode
+            } catch (e2: java.io.IOException) {
+                throw java.io.IOException("${e.message}; fallback also failed: ${e2.message}", e2)
+            }
+            if (code !in 200..299) throw HttpStatusException(code, link)
+            fallbackType = c.contentType
+            c.inputStream
+        }
     }
 
     /** Blocks until [stop] or the connection fails (throws). */
     fun run() {
-        var raw = http.open(url)
-        val type = http.contentType?.lowercase() ?: ""
+        var raw = openStream(url)
+        val type = (fallbackType ?: http.contentType)?.lowercase() ?: ""
         if ("html" in type) {
             http.close()
             throw java.io.IOException("Got a web page, not audio. Use the feed number or stream URL.")
@@ -46,9 +75,9 @@ class Mp3StreamDecoder(
             http.close()
             val link = Regex("https?://[^\\s\"'<>]+").find(body)?.value
                 ?: throw java.io.IOException("Feed URL returned ${http.contentType}, not audio")
-            raw = http.open(link)
+            raw = openStream(link)
         }
-        onConnected(http.contentType)
+        onConnected(fallbackType ?: http.contentType)
         val counted = object : FilterInputStream(raw) {
             override fun read(b: ByteArray, off: Int, len: Int): Int =
                 super.read(b, off, len).also { if (it > 0) onBytes(it) }
@@ -57,6 +86,7 @@ class Mp3StreamDecoder(
             decode(counted)
         } finally {
             http.close()
+            try { fallbackConn?.disconnect() } catch (_: Exception) {}
         }
         if (running) throw java.io.IOException("Stream ended")
     }

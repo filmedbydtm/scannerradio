@@ -3,6 +3,8 @@ package com.filmedbydtm.scannerfilter.audio
 import java.io.BufferedInputStream
 import java.io.IOException
 import java.io.InputStream
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.URI
@@ -37,9 +39,7 @@ class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTim
             val port = if (uri.port > 0) uri.port else if (https) 443 else 80
             val path = (uri.rawPath?.ifEmpty { "/" } ?: "/") + (uri.rawQuery?.let { "?$it" } ?: "")
 
-            val plain = Socket()
-            plain.connect(InetSocketAddress(host, port), connectTimeoutMs)
-            plain.soTimeout = readTimeoutMs
+            val plain = connect(host, port)
             val s: Socket = if (https) {
                 val ssl = (SSLSocketFactory.getDefault() as SSLSocketFactory)
                     .createSocket(plain, host, port, true) as SSLSocket
@@ -89,6 +89,28 @@ class HttpStream(private val connectTimeoutMs: Int = 15_000, private val readTim
             } else input
         }
         throw IOException("Too many redirects from $url")
+    }
+
+    /**
+     * Tries every address the host resolves to, IPv4 first. Phones often get IPv6 addresses
+     * from DNS without having a working IPv6 route ("No route to host").
+     */
+    private fun connect(host: String, port: Int): Socket {
+        val addresses = InetAddress.getAllByName(host).sortedBy { if (it is Inet4Address) 0 else 1 }
+        var last: Exception? = null
+        for (addr in addresses) {
+            val sock = Socket()
+            socket = sock
+            try {
+                sock.connect(InetSocketAddress(addr, port), connectTimeoutMs)
+                sock.soTimeout = readTimeoutMs
+                return sock
+            } catch (e: IOException) {
+                try { sock.close() } catch (_: Exception) {}
+                last = e
+            }
+        }
+        throw IOException("Could not reach $host:$port (tried ${addresses.size} addresses): ${last?.message}", last)
     }
 
     companion object {
